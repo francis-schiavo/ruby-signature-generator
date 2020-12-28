@@ -1,42 +1,45 @@
 # frozen_string_literal: true
 
+require 'blizzard_api'
 require 'sinatra'
-require 'oauth2'
-require 'json'
-require 'httparty'
 require 'mini_magick'
 
-$client = OAuth2::Client.new(ENV['CLIENT_ID'],
-                              ENV['CLIENT_SECRET'],
-                              site: 'https://us.battle.net')
-$token = nil
+set :bind, '0.0.0.0'
+use Rack::Deflater
 
-def token
-  $token = $client.client_credentials.get_token if !$token || $token.expired?
+BlizzardApi.configure do |config|
+  config.region = ENV.fetch 'REGION', 'us'
+  config.app_id = ENV['BNET_APPLICATION_ID']
+  config.app_secret = ENV['BNET_APPLICATION_SECRET']
 
-  $token.token
-end
-
-def classes
-  HTTParty.get('https://us.api.blizzard.com/wow/data/character/classes',
-               query: { "locale": 'en_US' },
-               headers: { "Authorization": "Bearer #{token}" })['classes']
-          .each_with_object({}) do |c, h|
-    h[c['id']] = c['name']
+  if ENV.fetch('USE_CACHE', 'false') == 'true'
+    config.use_cache = true
+    config.redis_host = ENV['REDIS_HOST']
+    config.redis_port = ENV['REDIS_PORT']
   end
 end
 
-def get_character(name, realm)
-  HTTParty.get("https://us.api.blizzard.com/wow/character/#{realm.downcase}/#{name.downcase}",
-               query: { "fields": 'guild,items',
-                        "locale": 'en_US' },
-               headers: { "Authorization": "Bearer #{token}" })
+def get_character(realm, name)
+  profile_api = BlizzardApi::Wow.character_profile
+  summary = profile_api.get realm, name
+  media = profile_api.media realm, name
+
+  guild_name = summary.dig(:guild, :name)
+  guild_name = "<#{guild_name}>" if guild_name
+
+  summary.slice(:name, :level, :average_item_level, :equipped_item_level, :achievement_points)
+    &.merge({
+              class_name: summary.dig(:character_class, :name, :en_US),
+              guild_name: guild_name,
+              realm_name: summary.dig(:realm, :name, :en_US),
+              faction: summary.dig(:faction, :type),
+              media: media[:assets].find { |asset| asset[:key].eql? 'inset' }
+            })
 end
 
-def get_image(character)
-  url = "https://render-us.worldofwarcraft.com/character/#{character['thumbnail'].sub('-avatar.jpg', '-inset.jpg')}"
-  avatar = MiniMagick::Image.open(url)
-  bg = MiniMagick::Image.open("./images/background-#{character['faction']}.png")
+def get_image(character_data)
+  avatar = MiniMagick::Image.open(character_data[:media][:value])
+  bg = MiniMagick::Image.open("./images/background-#{character_data[:faction]}.png")
   empty = MiniMagick::Image.open('./empty.png')
 
   sig = empty.composite(avatar) do |c|
@@ -47,23 +50,30 @@ def get_image(character)
     i.font('./fonts/merriweather/Merriweather-Bold.ttf')
     i.pointsize(30)
     i.fill('#deaa00')
-    i.draw("text 220,40 '#{character['name']}'")
+    i.draw("text 220,40 '#{character_data[:name]}'")
     i.font('./fonts/merriweather/Merriweather-Regular.ttf')
     i.pointsize(12)
     i.fill('#888888')
-    i.draw("text 220,65  'Level #{character['level']} #{character['class_name']} #{character['guild'] ? 'of <' + character['guild']['name'] + '> ' : ''}on #{character['realm']}'")
-    i.draw("text 220,85  'Item Level: #{character['items']['averageItemLevel']} (#{character['items']['averageItemLevelEquipped']})'")
-    i.draw("text 220,105 'Achievement Points: #{character['achievementPoints']}'")
+    i.draw("text 220,65 'Level #{character_data[:level]} #{character_data[:class_name]} #{character_data[:guild_name]} on #{character_data[:realm]}'")
+    i.draw("text 220,85  'Item Level: #{character_data[:average_item_level]} (#{character_data[:equipped_item_level]}))'")
+    i.draw("text 220,105 'Achievement Points: #{character_data[:achievement_points]}'")
   end.to_blob
 end
 
-def get_signature(name, realm)
-  character = get_character(name, realm)
-  character['class_name'] = classes[character['class']]
-  get_image(character)
+def get_signature(realm, name)
+  character_data = get_character(realm, name)
+  get_image(character_data)
 end
 
-get '/signature' do
+get '/' do
+  'Use the following path to test: /signature/:realm/:name'
+end
+
+get '/signature/:realm/:name' do |realm, name|
   content_type 'image/png'
-  get_signature(params[:characterName], params[:realmName])
+  get_signature(realm, name)
+end
+
+error BlizzardApi::ApiException do
+  'Failed to fetch data from the API, check the realm and character names or your credentials.'
 end

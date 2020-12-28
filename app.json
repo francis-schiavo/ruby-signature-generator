@@ -2,11 +2,15 @@
   "name": "Sample Signature Generator - Ruby",
   "description": "A sample app using the Blizzard Developer APIs",
   "env": {
-    "CLIENT_ID": {
+    "REGION": {
+      "description": "The region to fetch data from",
+      "value": "us"
+    },
+    "BNET_APPLICATION_ID": {
       "description": "The Client ID from develop.battle.net",
       "value": ""
     },
-    "CLIENT_SECRET": {
+    "BNET_APPLICATION_SECRET": {
       "description": "The Client Secret from develop.battle.net",
       "value": ""
     }

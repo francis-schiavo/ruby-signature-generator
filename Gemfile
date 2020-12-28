@@ -1,13 +1,20 @@
 # frozen_string_literal: true
 
 source 'https://rubygems.org'
+git_source(:github) { |repo| "https://github.com/#{repo}.git" }
 
-git_source(:github) { |repo_name| "https://github.com/#{repo_name}" }
+ruby '2.7.2'
 
-# gem "rails"
-gem 'httparty'
-gem 'json'
-gem 'mini_magick'
-gem 'oauth2'
+# Simple HTTP server
 gem 'sinatra'
-gem 'thin'
+
+# Image processing utility
+gem 'mini_magick'
+
+# Community maintained ruby API client
+gem 'blizzard_api'
+
+group :development do
+  # Code quality
+  gem 'rubocop'
+end
